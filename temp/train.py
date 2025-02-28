@@ -3,10 +3,13 @@ import sys
 import numpy as np
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
-from model_utils import ACTIONS, DATA_PATH, create_model
+from model_utils import ACTIONS, create_model
 
 # Updated constant for the desired number of frames per sequence
 TARGET_FRAMES = 45
+
+# Update the data path to the new directory
+DATA_PATH = 'training_data'
 
 class CustomModelCheckpoint(tf.keras.callbacks.Callback):
     """

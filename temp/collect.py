@@ -7,7 +7,10 @@ import threading
 import tensorflow as tf
 
 # Import organization-specific modules and functions
-from model_utils import ACTIONS, DATA_PATH, SEQ_LENGTH, NUM_SEQUENCES, mp_holistic, mp_drawing, mediapipe_detection, extract_keypoints
+from model_utils import ACTIONS, SEQ_LENGTH, NUM_SEQUENCES, mp_holistic, mp_drawing, mediapipe_detection, extract_keypoints
+
+# Update the data path to the new directory
+DATA_PATH = 'training_data'
 
 # Set the desired number of frames per sequence to 45
 TARGET_FRAMES = 45

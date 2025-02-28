@@ -1,71 +1,80 @@
 import os
 import numpy as np
 
+TARGET_FRAMES = 45
 
-def resample_sequence(sequence, target_length):
+
+def resample_sequence(sequence, target_length=TARGET_FRAMES):
     """
-    Resample a sequence (numpy array of frames) to a fixed target length
-    using uniform sampling.
+    Resample a sequence (numpy array) to a fixed target length using uniform sampling.
+    If the sequence has fewer than target_length frames, it pads by repeating the last frame.
 
     Args:
-      sequence (np.ndarray): Array with shape (num_frames, features)
-      target_length (int): Desired frame count for the output sequence
+      sequence (np.ndarray): Input array with shape (num_frames, features)
+      target_length (int): The desired number of frames (default: 45)
 
     Returns:
       np.ndarray: Resampled sequence with shape (target_length, features)
     """
-    current_length = len(sequence)
-    # If the sequence already has the target number, return it unchanged.
-    if current_length == target_length:
+    num_frames = len(sequence)
+    # If already the correct length, return as-is.
+    if num_frames == target_length:
         return sequence
-    elif current_length > target_length:
-        # Uniformly sample indices from the existing sequence
-        indices = np.linspace(0, current_length - 1, target_length, dtype=int)
+    elif num_frames > target_length:
+        # Uniformly sample indices
+        indices = np.linspace(0, num_frames - 1, target_length, dtype=int)
         return sequence[indices]
     else:
-        # If there are too few frames, we can either pad or skip.
-        # Here we choose to pad by repeating the last frame.
-        pad_count = target_length - current_length
+        # If not enough frames, pad by repeating the last frame.
+        pad_count = target_length - num_frames
         pad = np.repeat(sequence[-1][np.newaxis, :], pad_count, axis=0)
         return np.concatenate([sequence, pad], axis=0)
 
 
-def process_i_word_data(data_path, target_length=45):
+def process_npy_files(directory, target_length=TARGET_FRAMES):
     """
-    Process all .npy files in the provided data_path for the 'I' word.
-    If a sequence does not have exactly target_length frames, it is resampled.
-    The resampled sequences are saved with a suffix '_resampled.npy'.
+    Traverse the given directory recursively and resample .npy files to target_length frames.
+    Files are overwritten with the resampled sequence.
 
     Args:
-      data_path (str): Path to the directory containing the 'I' word session folders.
+      directory (str): Root directory to search for .npy files.
       target_length (int): Desired frame count per sequence.
+
+    Returns:
+      None
     """
-    # Walk through the directory for the I word.
-    for root, dirs, files in os.walk(data_path):
-        for file in files:
-            if file.endswith('.npy'):
-                file_path = os.path.join(root, file)
+    for root, _, files in os.walk(directory):
+        for filename in files:
+            if not filename.endswith('.npy'):
+                continue
+
+            file_path = os.path.join(root, filename)
+            try:
+                # Load file; allow_pickle=True in case file was saved with pickling.
+                sequence = np.load(file_path, allow_pickle=True)
+            except Exception as e:
+                print(f"Error loading {file_path}: {e}")
+                continue
+
+            # Check if sequence has at least one dimension, then determine frame count.
+            if sequence.ndim == 0:
+                print(f"Skipping {file_path}: array has no dimensions.")
+                continue
+
+            # Assume frames are along axis 0.
+            num_frames = len(sequence)
+            if num_frames != target_length:
+                resampled = resample_sequence(sequence, target_length)
                 try:
-                    sequence = np.load(file_path)
+                    np.save(file_path, resampled)
+                    print(f"Resampled {file_path}: {num_frames} --> {target_length} frames.")
                 except Exception as e:
-                    print(f"Error loading {file_path}: {e}")
-                    continue
-                current_length = len(sequence)
-                if current_length != target_length:
-                    # Resample the sequence to exactly target_length frames.
-                    resampled = resample_sequence(sequence, target_length)
-                    new_file_path = file_path.replace('.npy', '_resampled.npy')
-                    np.save(new_file_path, resampled)
-                    print(
-                        f"Resampled {file_path}: {current_length} -> {target_length} frames (saved as {new_file_path}).")
-                else:
-                    print(f"Sequence {file_path} already has {target_length} frames.")
+                    print(f"Error saving {file_path}: {e}")
+            else:
+                print(f"No operation needed for {file_path}: already {target_length} frames.")
 
 
 if __name__ == "__main__":
-    # Update to the directory of your collected 'I' word data.
-    # For example, if your data is stored under:
-    # "../Realtime-Sign-Language-Detection-Using-LSTM-Model/MP_Data/I"
-    DATA_PATH = "../Realtime-Sign-Language-Detection-Using-LSTM-Model/MP_Data/I"
-    process_i_word_data(DATA_PATH, target_length=45)
-    print("Resampling process completed.")
+    # Specify the directory containing your .npy files.
+    directory_path = "C:/Users/Malhar/PycharmProjects/lstm/temp/training_data"
+    process_npy_files(directory_path)

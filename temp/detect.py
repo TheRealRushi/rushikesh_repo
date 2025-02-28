@@ -160,7 +160,7 @@ if __name__ == "__main__":
         Dense(len(ACTIONS), activation='softmax')
     ])
 
-    dummy_model.compile(optimizer='adam', loss='categorical_crossentropy')
+    dummy_model.compile(optimizer='adam', loss='categoriqcal_crossentropy')
 
     # Start real-time detection with the dummy model.
     real_time_detection(dummy_model)

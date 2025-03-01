@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split
 ACTIONS = ['I', 'Hungry', 'Want', 'Food', 'Go', 'House', 'Sit', 'You', 'Right', 'Need',
            'Water', 'Long', 'Time', 'Person', 'Old_age', 'Old_time', 'Now', 'Here', 'Walk',
            'Swim', 'My', 'Catch', 'Fire', 'Zoo', 'Morning', 'Father']
-DATA_PATH = '../Realtime-Sign-Language-Detection-Using-LSTM-Model/MP_Data'
+DATA_PATH = '../temp/training_data'
 SEQ_LENGTH = 30
 NUM_SEQUENCES = 30
 

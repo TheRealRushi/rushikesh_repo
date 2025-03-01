@@ -5,12 +5,9 @@ import tkinter as tk
 import sys
 import time
 from model_utils import (ACTIONS, SEQ_LENGTH, mp_holistic, mediapipe_detection, extract_keypoints)
-
-# For drawing landmarks on video feed (optional)
 import mediapipe as mp
 
 mp_drawing = mp.solutions.drawing_utils
-
 
 def create_ui():
     """
@@ -36,21 +33,14 @@ def create_ui():
 
     return root, label_action, label_accuracy, label_sentence
 
-
 def translate_and_tts(sentence, target_language='en'):
     """
     Placeholder for translation and text-to-speech conversion.
-    Intended to use external tools like coqui and sarvam.
-    For demonstration, it prints the sentence and target language.
     """
-    # Here you would integrate with the translation API (e.g., Sarvam)
-    # and then pass the translated text to a TTS engine (e.g., Coqui TTS).
     print("Final Sentence:", sentence)
     print("Translating and synthesizing speech for language:", target_language)
-    # Dummy behavior: just simulate delay.
     time.sleep(1)
     print("Speech synthesis completed.")
-
 
 def real_time_detection(model):
     """
@@ -65,12 +55,10 @@ def real_time_detection(model):
     Press 'q' in the video window to exit.
     """
     sequence = []
-    sentence = []  # Stores temporary sentence words for confirmation
     predictions = []
     threshold = 0.8  # Confidence threshold for predictions
     selected_words = []  # Final confirmed words
 
-    # Initialize the UI for displaying prediction results and sentence
     ui_root, label_action, label_accuracy, label_sentence = create_ui()
 
     cap = cv2.VideoCapture(0)
@@ -78,89 +66,70 @@ def real_time_detection(model):
         print("Failed to open camera.")
         sys.exit()
 
-    # Use a holistic detector outside the loop for efficiency
+    # Determine the expected sequence length from the loaded model.
+    # This allows the detection code to adapt if the model expects a different length.
+    expected_seq_length = model.input_shape[1] if model.input_shape and model.input_shape[1] is not None else SEQ_LENGTH
+
     with mp_holistic.Holistic(min_detection_confidence=0.5,
                               min_tracking_confidence=0.5) as holistic:
+        confidence = 0  # Initialize confidence variable.
+        latest_prediction = "Uncertain"
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 continue
-
-            # Process frame and extract keypoints
             image, results = mediapipe_detection(frame, holistic)
             keypoints = extract_keypoints(results)
             sequence.append(keypoints)
 
-            # When sequence is complete, run model prediction
-            if len(sequence) == SEQ_LENGTH:
+            if len(sequence) == expected_seq_length:
                 res = model.predict(np.expand_dims(sequence, axis=0))[0]
                 predictions.append(np.argmax(res))
                 predicted_idx = np.argmax(res)
                 confidence = res[predicted_idx]
                 predicted_action = ACTIONS[predicted_idx]
 
-                # Update prediction if confidence threshold met
-                if confidence > threshold:
-                    # Keep track of latest prediction for confirmation
-                    latest_prediction = predicted_action
-                else:
-                    latest_prediction = "Uncertain"
+                latest_prediction = predicted_action if confidence > threshold else "Uncertain"
+                # Keep the most recent frames to maintain the expected window size
+                sequence = sequence[-(expected_seq_length - 1):]
 
-                # Reset sequence (using sliding window)
-                sequence = sequence[-(SEQ_LENGTH - 1):]
-
-                # Update Tkinter UI labels with the latest prediction and accuracy
                 label_action.config(text=f"Latest Prediction: {latest_prediction}")
                 label_accuracy.config(text=f"Accuracy: {confidence * 100:.1f}%")
                 ui_root.update_idletasks()
                 ui_root.update()
 
-            # Display video feed without overlays
             cv2.imshow('Sign Language Detection', image)
             key = cv2.waitKey(10) & 0xFF
-
-            # Global controls from the video window:
-            # 'q' to quit, 'c' to confirm the current prediction,
-            # 's' to submit the sentence.
             if key == ord('q'):
                 break
             elif key == ord('c'):
-                # Confirm the latest prediction if its confidence is sufficient
                 if confidence > threshold:
                     selected_words.append(latest_prediction)
-                    # Update the sentence label in the UI
                     label_sentence.config(text=f"Selected Sentence: {' '.join(selected_words)}")
                     print("Word confirmed:", latest_prediction)
                 else:
                     print("Prediction confidence too low to confirm.")
             elif key == ord('s'):
-                # Finalize sentence and invoke translation and TTS
                 if selected_words:
                     final_sentence = ' '.join(selected_words)
                     translate_and_tts(final_sentence, target_language='en')
-                    # Reset selected words after submission
                     selected_words = []
                     label_sentence.config(text="Selected Sentence: ")
 
-        # End of loop: release camera and destroy OpenCV and Tkinter windows
-        cap.release()
-        cv2.destroyAllWindows()
-        ui_root.destroy()
-
+    cap.release()
+    cv2.destroyAllWindows()
+    ui_root.destroy()
+    return
 
 if __name__ == "__main__":
-    # Create a dummy model with an input shape matching our keypoints output.
-    # Using SEQ_LENGTH timesteps with 1662 features per timestep.
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import Dense, Flatten
+    # Instead of creating a dummy model, load your trained model.
+    # For example, if you saved it as model.keras:
+    trained_model_path = "C:/Users/Malhar/PycharmProjects/lstm/temp/model.keras"  # Update the path as needed.
+    try:
+        model = tf.keras.models.load_model(trained_model_path)
+        print(f"Loaded trained model from {trained_model_path}")
+    except Exception as e:
+        print(f"Error loading trained model: {e}")
+        sys.exit()
 
-    dummy_model = Sequential([
-        Flatten(input_shape=(SEQ_LENGTH, 1662)),
-        Dense(64, activation='relu'),
-        Dense(len(ACTIONS), activation='softmax')
-    ])
-
-    dummy_model.compile(optimizer='adam', loss='categoriqcal_crossentropy')
-
-    # Start real-time detection with the dummy model.
-    real_time_detection(dummy_model)
+    real_time_detection(model)

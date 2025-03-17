@@ -7,8 +7,7 @@ import threading
 import tensorflow as tf
 
 # Import organization-specific modules and functions
-from model_utils import ACTIONS, SEQ_LENGTH, NUM_SEQUENCES, mp_holistic, mp_drawing, mediapipe_detection, \
-    extract_keypoints
+from model_utils import ACTIONS, SEQ_LENGTH, NUM_SEQUENCES, mp_holistic, mp_drawing, mediapipe_detection, extract_keypoints
 
 # Update the data path to the new directory
 DATA_PATH = 'training_data'
@@ -35,7 +34,6 @@ current_frame = None
 frame_lock = threading.Lock()
 capture_running = True  # Flag to signal the camera thread to stop
 
-
 def camera_capture_thread(cap):
     """
     Background thread function to continuously capture frames from the camera.
@@ -49,14 +47,12 @@ def camera_capture_thread(cap):
         else:
             time.sleep(0.01)
 
-
 def get_current_frame():
     """
     Safely retrieve the most recent frame captured by the background thread.
     """
     with frame_lock:
         return None if current_frame is None else current_frame.copy()
-
 
 # -----------------------
 # Data Augmentation Function
@@ -70,23 +66,179 @@ def augment_sequence(sequence, noise_std=0.01):
     augmented = sequence_arr + noise
     return augmented
 
+# -----------------------
+# Data Collection for a Single Action
+# -----------------------
+def record_action(action, cap, holistic):
+    """
+    Record data sequences for a single action (word) using the provided camera and holistic model.
+
+    The function manages session creation, sequence capture, and interactive commands.
+
+    Returns when user finishes or skips recording for the action.
+    """
+    print(f"\nReady to record data for word '{action}'.")
+    print("Press 's' at any time to skip this word.")
+
+    current_session_dir = None
+    session_count = 0
+    current_seq = 0  # Counter for sequences in the current session
+
+    while True:
+        # Create a new session if none exists or if the current session is full.
+        if current_session_dir is None or current_seq >= NUM_SEQUENCES:
+            if current_seq >= NUM_SEQUENCES:
+                print(f"Current session '{current_session_dir}' is full (max {NUM_SEQUENCES} sequences).")
+            session_count += 1
+            current_session_dir = os.path.join(DATA_PATH, action, f"session_{session_count}")
+            os.makedirs(current_session_dir, exist_ok=True)
+            current_seq = 0
+            print(f"\n--- Starting session {session_count} for word '{action}' ---")
+
+        # Capture sequences for the current session until the user makes a decision.
+        while current_seq < NUM_SEQUENCES:
+            skip_current_word = False
+            # Countdown before starting sequence capture.
+            for countdown in range(3, 0, -1):
+                frame = get_current_frame()
+                if frame is None:
+                    continue
+                countdown_text = f"Get Ready: {countdown}"
+                text_size, _ = cv2.getTextSize(countdown_text, cv2.FONT_HERSHEY_SIMPLEX, 2, 4)
+                text_x = int((frame.shape[1] - text_size[0]) / 2)
+                cv2.putText(frame, countdown_text, (text_x, int(frame.shape[0] / 2)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4, cv2.LINE_AA)
+                cv2.imshow('Data Collection', frame)
+                key = cv2.waitKey(1000) & 0xFF
+                if key == ord('s'):
+                    print(f"Skip command received. Skipping word '{action}'.")
+                    skip_current_word = True
+                    break
+            if skip_current_word:
+                break
+
+            sequence = []
+            paused = False
+            # Record exactly TARGET_FRAMES frames
+            while len(sequence) < TARGET_FRAMES:
+                frame = get_current_frame()
+                if frame is None:
+                    continue
+
+                if not paused:
+                    image, results = mediapipe_detection(frame, holistic)
+                    # Draw landmarks if available
+                    if results.pose_landmarks:
+                        mp_drawing.draw_landmarks(
+                            image, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS)
+                    if results.face_landmarks:
+                        mp_drawing.draw_landmarks(
+                            image, results.face_landmarks, mp_holistic.FACEMESH_TESSELATION)
+                    if results.left_hand_landmarks:
+                        mp_drawing.draw_landmarks(
+                            image, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
+                    if results.right_hand_landmarks:
+                        mp_drawing.draw_landmarks(
+                            image, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
+
+                    status_text = f"Session {session_count} | Seq {current_seq} | Frame {len(sequence) + 1}/{TARGET_FRAMES}"
+                    cv2.putText(image, status_text, (15, 100),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
+
+                    keypoints = extract_keypoints(results)
+                    sequence.append(keypoints)
+
+                cv2.imshow('Data Collection', image)
+                key = cv2.waitKey(33) & 0xFF
+                if key == ord('q'):
+                    # Abort the entire data collection process.
+                    return False
+                elif key == ord('d'):
+                    print(f"Discarded sequence during capture in session {session_count} for '{action}'.")
+                    sequence = []  # Discard current sequence and restart it
+                    break
+                elif key == ord('p'):
+                    paused = not paused
+                    print("Paused." if paused else "Resumed.")
+                elif key == ord('s'):
+                    print(f"Skip command received. Skipping word '{action}'.")
+                    skip_current_word = True
+                    break
+            if skip_current_word:
+                break
+
+            # Confirm and save sequence if exactly TARGET_FRAMES have been captured.
+            if len(sequence) == TARGET_FRAMES:
+                confirm_image = image.copy()
+                cv2.putText(confirm_image, "Keep this sequence? (y=Yes, d=Discard)",
+                            (15, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
+                cv2.imshow('Data Collection', confirm_image)
+                print(f"Sequence {current_seq} captured in session {session_count} for '{action}'.")
+                print("Press 'y' to save, 'd' to re-record, or 's' to skip this word.")
+                while True:
+                    key = cv2.waitKey(0) & 0xFF
+                    if key == ord('q'):
+                        return False
+                    elif key == ord('y'):
+                        seq_path = os.path.join(current_session_dir, f"seq_{current_seq}.npy")
+                        np.save(seq_path, sequence)
+                        print(f"Saved sequence {current_seq} in session {session_count} for '{action}'.")
+                        # Save augmented sequence copy.
+                        augmented_sequence = augment_sequence(sequence)
+                        aug_path = os.path.join(current_session_dir, f"seq_{current_seq}_aug.npy")
+                        np.save(aug_path, augmented_sequence)
+                        print(f"Saved augmented sequence {current_seq} for '{action}'.")
+                        current_seq += 1
+                        break
+                    elif key == ord('d'):
+                        print(f"Re-recording sequence {current_seq} in session {session_count} for '{action}'.")
+                        break
+                    elif key == ord('s'):
+                        print(f"Skip command received. Skipping word '{action}'.")
+                        skip_current_word = True
+                        break
+                if skip_current_word:
+                    break
+            else:
+                print("Sequence not completed. Re-recording.")
+                continue  # re-record current sequence
+
+        if skip_current_word:
+            print(f"Skipping further recording for word '{action}'.")
+            break
+
+        # Prompt: update current session or start a new session?
+        print(f"\nSession {session_count} for word '{action}' completed.")
+        print("Press 'u' to update (add more sequences to this session),")
+        print("Press 'n' to start a new session,")
+        print("Press 's' to skip this word,")
+        print("or any other key to finish recording for '{action}'.")
+        key = cv2.waitKey(0) & 0xFF
+        if key == ord('u'):
+            if current_seq >= NUM_SEQUENCES:
+                print("Current session is full. Starting a new session.")
+                current_session_dir = None  # force new session creation
+            else:
+                print("Updating current session.")
+                continue
+        elif key == ord('n'):
+            print("Starting a new session for this word.")
+            current_session_dir = None  # force new session creation
+            continue
+        elif key == ord('s'):
+            print(f"Skipping further recording for word '{action}'.")
+            break
+        else:
+            print(f"Finished recording for word '{action}'.")
+            break
+
+    # Return True to indicate successful completion for this action.
+    return True
 
 # -----------------------
-# Main Data Collection Function with Global Skip Button
+# Main Data Collection Function with Interactive Word Loop
 # -----------------------
 def collect_data():
-    """
-    Collect data for each action (word) using a webcam.
-    This version captures exactly TARGET_FRAMES (45) per sequence.
-
-    A global "skip" button (key 's') is available at any time to skip the current word.
-
-    Global controls during data collection:
-      - Press 'd' to discard a sequence during capture.
-      - Press 'p' to toggle pause.
-      - Press 'q' to abort data collection.
-      - Press 's' at any time to skip the current word.
-    """
     global capture_running
 
     cap = cv2.VideoCapture(0)
@@ -98,157 +250,28 @@ def collect_data():
     thread.start()
 
     with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5) as holistic:
-        # Iterate through each word (action)
-        for action in ACTIONS:
-            skip_current_word = False  # flag to skip the current word anytime
-            action_dir = os.path.join(DATA_PATH, action)
-            os.makedirs(action_dir, exist_ok=True)
-            session_count = 0
+        # Outer loop: repeatedly prompt for action selection.
+        while True:
+            print("\nAvailable actions:")
+            for action in ACTIONS:
+                print(f"  - {action}")
+            selected = input("Enter the action you want to record (or type 'exit' to quit): ").strip()
+            if selected.lower() == 'exit':
+                break
+            elif selected not in ACTIONS:
+                print("Invalid action selected. Please try again.")
+                continue
 
-            print(f"\nReady to record data for word '{action}'.")
-            print("Press 's' at any time to skip this word.")
-
-            while True:
-                session_count += 1
-                session_dir = os.path.join(action_dir, f"session_{session_count}")
-                os.makedirs(session_dir, exist_ok=True)
-                print(f"\n--- Recording session {session_count} for word '{action}' ---")
-
-                seq = 0
-                while seq < NUM_SEQUENCES:
-                    # Countdown before starting sequence capture.
-                    for countdown in range(3, 0, -1):
-                        frame = get_current_frame()
-                        if frame is None:
-                            continue
-                        countdown_text = f"Get Ready: {countdown}"
-                        text_size, _ = cv2.getTextSize(countdown_text, cv2.FONT_HERSHEY_SIMPLEX, 2, 4)
-                        text_x = int((frame.shape[1] - text_size[0]) / 2)
-                        cv2.putText(frame, countdown_text, (text_x, int(frame.shape[0] / 2)),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4, cv2.LINE_AA)
-                        cv2.imshow('Data Collection', frame)
-                        key = cv2.waitKey(1000) & 0xFF
-                        # Check for global skip anywhere.
-                        if key == ord('s'):
-                            print(f"Skip command received. Skipping word '{action}'.")
-                            skip_current_word = True
-                            break
-                    if skip_current_word:
-                        break  # Break out of sequence loop
-
-                    # Countdown completed without skip. Continue to record sequence.
-                    sequence = []
-                    paused = False
-                    while len(sequence) < TARGET_FRAMES:
-                        frame = get_current_frame()
-                        if frame is None:
-                            continue
-
-                        if not paused:
-                            image, results = mediapipe_detection(frame, holistic)
-                            # Draw landmarks if available
-                            if results.pose_landmarks:
-                                mp_drawing.draw_landmarks(
-                                    image, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS)
-                            if results.face_landmarks:
-                                mp_drawing.draw_landmarks(
-                                    image, results.face_landmarks, mp_holistic.FACEMESH_TESSELATION)
-                            if results.left_hand_landmarks:
-                                mp_drawing.draw_landmarks(
-                                    image, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
-                            if results.right_hand_landmarks:
-                                mp_drawing.draw_landmarks(
-                                    image, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS)
-
-                            status_text = f"Session {session_count} | Seq {seq} | Frame {len(sequence) + 1}/{TARGET_FRAMES}"
-                            cv2.putText(image, status_text, (15, 100),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
-
-                            keypoints = extract_keypoints(results)
-                            sequence.append(keypoints)
-
-                        cv2.imshow('Data Collection', image)
-                        key = cv2.waitKey(33) & 0xFF
-                        if key == ord('q'):
-                            capture_running = False
-                            cap.release()
-                            cv2.destroyAllWindows()
-                            sys.exit("Data collection aborted by user.")
-                        elif key == ord('d'):
-                            print(f"Discarded sequence during capture in session {session_count} for '{action}'.")
-                            sequence = []  # Discard current sequence and restart it
-                            break
-                        elif key == ord('p'):
-                            paused = not paused
-                            print("Paused." if paused else "Resumed.")
-                        elif key == ord('s'):
-                            print(f"Skip command received. Skipping word '{action}'.")
-                            skip_current_word = True
-                            break
-                    if skip_current_word:
-                        break
-
-                    # Confirm and save sequence if exactly TARGET_FRAMES have been captured.
-                    if len(sequence) == TARGET_FRAMES:
-                        confirm_image = image.copy()
-                        cv2.putText(confirm_image, "Keep this sequence? (y=Yes, d=Discard)",
-                                    (15, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
-                        cv2.imshow('Data Collection', confirm_image)
-                        print(
-                            f"Sequence {seq} captured. Press 'y' to save, 'd' to re-record, or 's' to skip this word.")
-                        while True:
-                            key = cv2.waitKey(0) & 0xFF
-                            if key == ord('q'):
-                                capture_running = False
-                                cap.release()
-                                cv2.destroyAllWindows()
-                                sys.exit("Data collection aborted by user.")
-                            elif key == ord('y'):
-                                seq_path = os.path.join(session_dir, f"seq_{seq}.npy")
-                                np.save(seq_path, sequence)
-                                print(f"Saved sequence {seq} in session {session_count} for '{action}'.")
-                                # Save augmented sequence copy.
-                                augmented_sequence = augment_sequence(sequence)
-                                aug_path = os.path.join(session_dir, f"seq_{seq}_aug.npy")
-                                np.save(aug_path, augmented_sequence)
-                                print(f"Saved augmented sequence {seq} for '{action}'.")
-                                seq += 1
-                                break
-                            elif key == ord('d'):
-                                print(f"Re-recording sequence {seq} in session {session_count} for '{action}'.")
-                                break
-                            elif key == ord('s'):
-                                print(f"Skip command received. Skipping word '{action}'.")
-                                skip_current_word = True
-                                break
-                        if skip_current_word:
-                            break
-                    else:
-                        print("Sequence not completed. Re-recording.")
-                        continue  # Continue recording sequences in current session
-
-                # End of session loop
-                if skip_current_word:
-                    print(f"Session skipped. Moving to the next word.")
-                    break
-
-                print(f"Session {session_count} for word '{action}' completed.")
-                print(
-                    "Press 'n' to record another session for this word, 's' to skip to the next word, or any other key to move on.")
-                key = cv2.waitKey(0) & 0xFF
-                if key == ord('n'):
-                    continue
-                elif key == ord('s'):
-                    print(f"Skipping further training for word '{action}'.")
-                    break
-                else:
-                    break
+            # Record data for the selected action.
+            success = record_action(selected, cap, holistic)
+            if not success:
+                # If record_action returns False, it signals an abort.
+                break
 
     capture_running = False
     thread.join(timeout=1)
     cap.release()
     cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     collect_data()

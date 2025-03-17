@@ -10,10 +10,10 @@ from sklearn.model_selection import train_test_split
 # ======================
 # Configuration
 # ======================
-# List of actions for recognition
-ACTIONS = ['I', 'Hungry', 'Want', 'Food', 'Go', 'House', 'Sit', 'You', 'Right', 'Need',
-           'Water', 'Long', 'Time', 'Person', 'Old_age', 'Old_time', 'Now', 'Here', 'Walk',
-           'Swim', 'My', 'Catch', 'Fire', 'Zoo', 'Morning', 'Father']
+# Updated list of actions for recognition
+ACTIONS = ['I', 'Hungry', 'Want', 'Food', 'Go', 'House', 'You', 'Right',
+           'Water', 'Long', 'Time', 'Person', 'Old_age', 'Now', 'Here',
+           'Walk', 'Swim', 'My', 'Catch', 'Morning', 'Father', 'Thank You', 'Sorry']
 DATA_PATH = '../temp/training_data'
 SEQ_LENGTH = 30
 NUM_SEQUENCES = 30
